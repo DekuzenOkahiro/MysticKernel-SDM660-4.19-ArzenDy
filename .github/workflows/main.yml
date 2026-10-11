@@ -24,7 +24,7 @@ jobs:
 
     steps:
       - name: Checkout Kernel Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
@@ -144,7 +144,7 @@ jobs:
 
       - name: Upload Kernel Image
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Mystic-Kernel-${{ github.event.inputs.defconfig }}-${{ github.run_number }}
           path: |
