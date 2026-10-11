@@ -1,0 +1,165 @@
+name: Build Mystic Kernel SDM660
+
+on:
+  workflow_dispatch:
+    inputs:
+      defconfig:
+        description: 'Defconfig to use'
+        required: true
+        default: 'mystic-a26x_defconfig'
+      lto:
+        description: 'LTO mode (thin, full, none)'
+        required: true
+        default: 'thin'
+      clang_version:
+        description: 'Clang version (e.g., 12, 14, 15)'
+        required: true
+        default: '14'
+
+jobs:
+  build:
+    name: Build Kernel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+            "$AGENT_TOOLSDIRECTORY" || true
+          sudo apt-get clean
+          df -h
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential ccache curl flex \
+            g++-multilib gcc-multilib git gnupg gperf \
+            imagemagick lib32ncurses5-dev lib32readline-dev \
+            lib32z1-dev libelf-dev liblz4-tool libncurses5 \
+            libncurses5-dev libsdl1.2-dev libssl-dev libxml2 \
+            libxml2-utils lzop pngcrush rsync schedtool \
+            squashfs-tools xsltproc zip zlib1g-dev \
+            python3 python3-pip aria2
+
+      - name: Setup Swap (for low RAM runners)
+        run: |
+          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          sudo swapon --show
+
+      - name: Install Clang & LLVM Toolchain
+        run: |
+          CLANG_VER="${{ github.event.inputs.clang_version }}"
+          echo "Installing Clang/LLVM $CLANG_VER"
+          sudo apt-get install -y clang-$CLANG_VER lld-$CLANG_VER llvm-$CLANG_VER
+
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-$CLANG_VER 200
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-$CLANG_VER 200
+          sudo update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-$CLANG_VER 200
+          sudo update-alternatives --install /usr/bin/llvm-ar llvm-ar /usr/bin/llvm-ar-$CLANG_VER 200
+          sudo update-alternatives --install /usr/bin/llvm-nm llvm-nm /usr/bin/llvm-nm-$CLANG_VER 200
+          sudo update-alternatives --install /usr/bin/llvm-objcopy llvm-objcopy /usr/bin/llvm-objcopy-$CLANG_VER 200
+          sudo update-alternatives --install /usr/bin/llvm-objdump llvm-objdump /usr/bin/llvm-objdump-$CLANG_VER 200
+          sudo update-alternatives --install /usr/bin/llvm-strip llvm-strip /usr/bin/llvm-strip-$CLANG_VER 200
+
+          clang --version
+          ld.lld --version
+
+      - name: Install ARM32 Cross Compiler
+        run: |
+          sudo apt-get install -y gcc-arm-linux-gnueabi
+          arm-linux-gnueabi-gcc --version || true
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: 3G
+          key: ${{ runner.os }}-clang-${{ github.event.inputs.clang_version }}-${{ github.event.inputs.defconfig }}
+
+      - name: Export Build Variables
+        run: |
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "SUBARCH=arm64" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> $GITHUB_ENV
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "PATH=/usr/lib/ccache:$PATH" >> $GITHUB_ENV
+
+      - name: Generate Defconfig
+        run: |
+          DEFCONFIG="${{ github.event.inputs.defconfig }}"
+          echo "Using defconfig: $DEFCONFIG"
+          make O=out LLVM=1 LLVM_IAS=1 $DEFCONFIG
+
+      - name: Build Kernel
+        run: |
+          LTO_MODE="${{ github.event.inputs.lto }}"
+          LTO_FLAG=""
+          if [ "$LTO_MODE" != "none" ]; then
+            LTO_FLAG="LTO=$LTO_MODE"
+          fi
+
+          make -j$(nproc --all) O=out \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            $LTO_FLAG \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CC="ccache clang" \
+            2>&1 | tee build.log
+
+      - name: Check Build Output
+        if: always()
+        run: |
+          echo "=== Build output files ==="
+          ls -la out/arch/arm64/boot/ || true
+          echo ""
+          echo "=== Build log tail ==="
+          tail -n 100 build.log || true
+
+      - name: Package AnyKernel3 (Optional)
+        if: success()
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git -b master anykernel || true
+          if [ -d "anykernel" ]; then
+            cp out/arch/arm64/boot/Image.gz-dtb anykernel/ 2>/dev/null || \
+            cp out/arch/arm64/boot/Image.gz anykernel/ 2>/dev/null || \
+            cp out/arch/arm64/boot/Image anykernel/ 2>/dev/null || true
+            cd anykernel && zip -r9 ../Mystic-Kernel-${{ github.event.inputs.defconfig }}.zip * -x .git README.md *placeholder
+          fi
+
+      - name: Upload Kernel Image
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mystic-Kernel-${{ github.event.inputs.defconfig }}-${{ github.run_number }}
+          path: |
+            out/arch/arm64/boot/Image
+            out/arch/arm64/boot/Image.gz
+            out/arch/arm64/boot/Image.gz-dtb
+            Mystic-Kernel-*.zip
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: build.log
+          if-no-files-found: warn
+          retention-days: 7
