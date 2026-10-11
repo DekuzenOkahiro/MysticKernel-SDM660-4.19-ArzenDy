@@ -16,6 +16,9 @@ on:
         required: true
         default: '14'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build Kernel
@@ -42,6 +45,7 @@ jobs:
           sudo apt-get install -y \
             bc bison build-essential ccache curl flex \
             g++-multilib gcc-multilib git gnupg gperf \
+            gcc-aarch64-linux-gnu \
             imagemagick lib32ncurses5-dev lib32readline-dev \
             lib32z1-dev libelf-dev liblz4-tool libncurses5 \
             libncurses5-dev libsdl1.2-dev libssl-dev libxml2 \
@@ -151,26 +155,54 @@ jobs:
           echo "=== Build log tail ==="
           tail -n 100 build.log || true
 
-      - name: Package AnyKernel3 (Optional)
+      - name: Package AnyKernel3
+        id: pack
         if: success()
         run: |
+          set -e
           TIMESTAMP=$(date +'%Y%m%d-%H%M')
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git -b master anykernel || true
-          if [ -d "anykernel" ]; then
-            cp out/arch/arm64/boot/Image.gz-dtb anykernel/ 2>/dev/null || \
-            cd anykernel && zip -r9 ../Mystic-Kernel-ArzenDy-${TIMESTAMP}.zip * -x .git README.md *placeholder
-          fi
+          BOOT=out/arch/arm64/boot
+          ZIPNAME="Mystic-Kernel-ArzenDy-${TIMESTAMP}.zip"
 
-      - name: Upload Kernel Image
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git -b master anykernel
+
+          # Image.gz-dtb masuk langsung ke root AnyKernel3
+          cp "$BOOT/Image.gz-dtb" anykernel/
+
+          # Zip flashable (isi zip = file AnyKernel3 + Image.gz-dtb)
+          cd anykernel
+          zip -r9 "../$ZIPNAME" . -x ".git*" "README.md" "*placeholder"
+          cd ..
+
+          # Siapkan file mentah dari out/ (flat, tanpa folder)
+          mkdir -p release
+          cp "$BOOT/Image.gz-dtb" release/
+          cp "$BOOT/Image"        release/
+          cp "$BOOT/Image.gz"     release/
+
+          echo "zipname=$ZIPNAME" >> "$GITHUB_OUTPUT"
+          echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
+          ls -la "$ZIPNAME" release/
+
+      - name: Publish GitHub Release
         if: success()
-        uses: actions/upload-artifact@v6
+        uses: softprops/action-gh-release@v2
         with:
-          name: Mystic-Kernel-${{ github.event.inputs.defconfig }}-${{ github.run_number }}
-          path: |
-            out/arch/arm64/boot/Image.gz-dtb
-            Mystic-Kernel-*.zip
-          if-no-files-found: warn
-          retention-days: 30
+          tag_name: mystic-${{ github.run_number }}-${{ steps.pack.outputs.timestamp }}
+          name: Mystic Kernel #${{ github.run_number }} (${{ steps.pack.outputs.timestamp }})
+          body: |
+            Defconfig : ${{ github.event.inputs.defconfig }}
+            LTO       : ${{ github.event.inputs.lto }}
+            Clang     : ${{ github.event.inputs.clang_version }}
+
+            - `${{ steps.pack.outputs.zipname }}` : flashable AnyKernel3 (sudah berisi Image.gz-dtb)
+            - `Image.gz-dtb`, `Image`, `Image.gz` : file mentah hasil build
+          files: |
+            ${{ steps.pack.outputs.zipname }}
+            release/Image.gz-dtb
+            release/Image
+            release/Image.gz
+          fail_on_unmatched_files: true
 
       - name: Upload Build Log
         if: always()
