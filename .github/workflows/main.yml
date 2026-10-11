@@ -154,12 +154,11 @@ jobs:
       - name: Package AnyKernel3 (Optional)
         if: success()
         run: |
+          TIMESTAMP=$(date +'%Y%m%d-%H%M')
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git -b master anykernel || true
           if [ -d "anykernel" ]; then
             cp out/arch/arm64/boot/Image.gz-dtb anykernel/ 2>/dev/null || \
-            cp out/arch/arm64/boot/Image.gz anykernel/ 2>/dev/null || \
-            cp out/arch/arm64/boot/Image anykernel/ 2>/dev/null || true
-            cd anykernel && zip -r9 ../Mystic-Kernel-${{ github.event.inputs.defconfig }}.zip * -x .git README.md *placeholder
+            cd anykernel && zip -r9 ../Mystic-Kernel-ArzenDy-${TIMESTAMP}.zip * -x .git README.md *placeholder
           fi
 
       - name: Upload Kernel Image
@@ -168,8 +167,6 @@ jobs:
         with:
           name: Mystic-Kernel-${{ github.event.inputs.defconfig }}-${{ github.run_number }}
           path: |
-            out/arch/arm64/boot/Image
-            out/arch/arm64/boot/Image.gz
             out/arch/arm64/boot/Image.gz-dtb
             Mystic-Kernel-*.zip
           if-no-files-found: warn
