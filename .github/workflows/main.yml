@@ -51,11 +51,31 @@ jobs:
 
       - name: Setup Swap (for low RAM runners)
         run: |
-          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+          # Cek apakah sudah ada swap aktif
+          if swapon --show | grep -q .; then
+            echo "Swap sudah aktif:"
+            swapon --show
+            echo "Melewati pembuatan swap baru."
+            exit 0
+          fi
+
+          # Hapus swapfile lama jika ada (tapi tidak aktif)
+          if [ -f /swapfile ]; then
+            echo "Menghapus /swapfile lama..."
+            sudo swapoff /swapfile 2>/dev/null || true
+            sudo rm -f /swapfile
+          fi
+
+          # Buat swapfile baru dengan dd (lebih aman dari fallocate di beberapa FS)
+          echo "Membuat /swapfile 8G..."
+          sudo dd if=/dev/zero of=/swapfile bs=1M count=8192 status=progress
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
-          sudo swapon --show
+
+          echo "=== Swap aktif ==="
+          swapon --show
+          free -h
 
       - name: Install Clang & LLVM Toolchain
         run: |
