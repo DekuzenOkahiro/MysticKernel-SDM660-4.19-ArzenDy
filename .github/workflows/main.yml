@@ -164,7 +164,7 @@ jobs:
           BOOT=out/arch/arm64/boot
           ZIPNAME="Mystic-Kernel-ArzenDy-${TIMESTAMP}.zip"
 
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git -b master anykernel
+          git clone --depth=1 https://github.com/DekuzenOkahiro/AnyKernel3-for-Mi6x -b master anykernel
 
           # Image.gz-dtb masuk langsung ke root AnyKernel3
           cp "$BOOT/Image.gz-dtb" anykernel/
