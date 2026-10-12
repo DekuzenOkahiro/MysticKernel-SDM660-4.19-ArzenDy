@@ -29,7 +29,9 @@ jobs:
       - name: Checkout Kernel Source
         uses: actions/checkout@v5
         with:
-          fetch-depth: 1
+          ref: BakaSU
+          submodules: 'recursive'
+          fetch-depth: 0
 
       - name: Free Disk Space
         run: |
